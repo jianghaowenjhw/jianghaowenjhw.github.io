@@ -1,1 +1,1103 @@
-Hello World
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>星际战机 - 太空射击游戏</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #0a0a0a;
+            overflow: hidden;
+            font-family: 'Courier New', monospace;
+            cursor: crosshair;
+        }
+
+        #gameCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            background: radial-gradient(ellipse at center, #1a1a2e 0%, #0a0a0a 100%);
+        }
+
+        #hud {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: #00ffff;
+            font-size: 14px;
+            text-shadow: 0 0 10px #00ffff;
+            background: rgba(0, 20, 40, 0.7);
+            padding: 15px;
+            border-radius: 5px;
+            border: 1px solid rgba(0, 255, 255, 0.3);
+        }
+
+        #weaponHud {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .weapon-icon {
+            width: 60px;
+            height: 60px;
+            background: rgba(0, 20, 40, 0.7);
+            border: 2px solid rgba(0, 255, 255, 0.3);
+            border-radius: 5px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #00ffff;
+            font-size: 12px;
+            position: relative;
+            transition: all 0.3s ease;
+        }
+
+        .weapon-icon.active {
+            border-color: #00ffff;
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
+        }
+
+        .cooldown-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 0, 0, 0.3);
+            transform-origin: bottom;
+            transform: scaleY(0);
+            transition: transform 0.1s linear;
+        }
+
+        #healthBar {
+            position: absolute;
+            top: 220px;
+            left: 20px;
+            width: 200px;
+            height: 10px;
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(0, 255, 255, 0.3);
+            border-radius: 5px;
+            overflow: hidden;
+        }
+
+        #healthFill {
+            height: 100%;
+            background: linear-gradient(90deg, #00ff00, #00ffff);
+            transition: width 0.3s ease;
+        }
+
+        #shieldBar {
+            position: absolute;
+            top: 235px;
+            left: 20px;
+            width: 200px;
+            height: 5px;
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(0, 100, 255, 0.3);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        #shieldFill {
+            height: 100%;
+            background: linear-gradient(90deg, #0066ff, #00ccff);
+            transition: width 0.3s ease;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <div id="hud">
+        <div>得分: <span id="score">0</span></div>
+        <div>击杀: <span id="kills">0</span></div>
+        <div>时间: <span id="time">0</span>s</div>
+        <div style="margin-top: 5px;">
+            <div>生命: <span id="healthValue">100</span>/100</div>
+            <div>护盾: <span id="shieldValue">100</span>/100</div>
+        </div>
+        <div style="margin-top: 10px; font-size: 12px; opacity: 0.7;">
+            <div>1/2/3: 切换武器</div>
+            <div>空格: 暂停</div>
+            <div>右键: 切换武器</div>
+        </div>
+    </div>
+    <div id="weaponHud">
+        <div class="weapon-icon active" id="weapon1">机枪</div>
+        <div class="weapon-icon" id="weapon2">激光</div>
+        <div class="weapon-icon" id="weapon3">榴弹</div>
+    </div>
+    <div id="healthBar">
+        <div id="healthFill" style="width: 100%"></div>
+    </div>
+    <div id="shieldBar">
+        <div id="shieldFill" style="width: 100%"></div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // 设置画布大小
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        // 游戏状态
+        const game = {
+            score: 0,
+            kills: 0,
+            time: 0,
+            lastTime: 0,
+            spawnRate: 0.02,
+            maxSpawnRate: 0.05,
+            gameOver: false,
+            paused: false
+        };
+
+        // 玩家对象
+        const player = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            angle: 0,
+            size: 20,
+            health: 100,
+            maxHealth: 100,
+            shield: 100,
+            maxShield: 100,
+            weapons: ['machine', 'laser', 'grenade'],
+            currentWeapon: 0,
+            weaponCooldown: 0,
+            switchCooldown: 0,
+            firing: false
+        };
+
+        // 子弹数组
+        const bullets = [];
+        
+        // 敌人数组
+        const enemies = [];
+        
+        // 粒子数组
+        const particles = [];
+
+        // 激光效果数组
+        const laserEffects = [];
+
+        // 鼠标位置
+        const mouse = {
+            x: 0,
+            y: 0
+        };
+
+        // 武器配置
+        const weaponConfig = {
+            machine: {
+                cooldown: 3, // 提升射速：从5降到3
+                damage: 10,
+                speed: 15,
+                color: '#00ffff',
+                size: 3
+            },
+            laser: {
+                cooldown: 15, // 降低冷却：从20降到15
+                damage: 40, // 提升伤害：从25提升到40
+                speed: 25,
+                color: '#ff00ff',
+                size: 5,
+                piercing: true,
+                beamWidth: 16, // 激光束宽度
+                beamLength: 900 // 激光束长度
+            },
+            grenade: {
+                cooldown: 25, // 降低冷却：从30降到25
+                damage: 60, // 提升伤害：从50提升到60
+                speed: 12,
+                color: '#ffff00',
+                size: 10,
+                explosion: true,
+                explosionRadius: 200, 
+                explosionDamage: 60 // 提升范围伤害：从50提升到60
+            }
+        };
+
+        // 事件监听
+        canvas.addEventListener('mousemove', (e) => {
+            mouse.x = e.clientX;
+            mouse.y = e.clientY;
+        });
+
+        canvas.addEventListener('mousedown', (e) => {
+            if (e.button === 0) {
+                player.firing = true;
+            }
+        });
+
+        canvas.addEventListener('mouseup', (e) => {
+            if (e.button === 0) {
+                player.firing = false;
+            }
+        });
+
+        canvas.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            if (player.switchCooldown <= 0) {
+                player.currentWeapon = (player.currentWeapon + 1) % 3;
+                player.switchCooldown = 30;
+                updateWeaponUI();
+            }
+        });
+
+        // 键盘事件
+        document.addEventListener('keydown', (e) => {
+            if (game.gameOver) return;
+            
+            switch(e.code) {
+                case 'Digit1':
+                case 'Digit2':
+                case 'Digit3':
+                    const weaponIndex = parseInt(e.code.slice(-1)) - 1;
+                    if (player.switchCooldown <= 0) {
+                        player.currentWeapon = weaponIndex;
+                        player.switchCooldown = 30;
+                        updateWeaponUI();
+                    }
+                    break;
+                case 'Space':
+                    e.preventDefault();
+                    game.paused = !game.paused;
+                    if (!game.paused) {
+                        game.lastTime = Date.now();
+                    }
+                    break;
+                case 'KeyR':
+                    if (game.gameOver) {
+                        restartGame();
+                    }
+                    break;
+            }
+        });
+
+        // 更新武器UI
+        function updateWeaponUI() {
+            document.querySelectorAll('.weapon-icon').forEach((icon, index) => {
+                icon.classList.toggle('active', index === player.currentWeapon);
+            });
+        }
+
+        // 创建敌人
+        function createEnemy() {
+            const side = Math.floor(Math.random() * 4);
+            let x, y;
+            
+            switch(side) {
+                case 0: x = Math.random() * canvas.width; y = -30; break;
+                case 1: x = canvas.width + 30; y = Math.random() * canvas.height; break;
+                case 2: x = Math.random() * canvas.width; y = canvas.height + 30; break;
+                case 3: x = -30; y = Math.random() * canvas.height; break;
+            }
+            
+            const types = ['triangle', 'square', 'pentagon', 'hexagon'];
+            const type = types[Math.floor(Math.random() * types.length)];
+            
+            enemies.push({
+                x,
+                y,
+                type,
+                size: 20 + Math.random() * 20,
+                health: 20 + Math.random() * 30,
+                maxHealth: 20 + Math.random() * 30,
+                speed: 0.3 + Math.random() * 0.7, // 降低速度范围到 0.3-1.0
+                angle: 0
+            });
+        }
+
+        // 创建粒子效果
+        function createParticles(x, y, color, count = 10) {
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x,
+                    y,
+                    vx: (Math.random() - 0.5) * 10,
+                    vy: (Math.random() - 0.5) * 10,
+                    life: 30,
+                    maxLife: 30,
+                    color,
+                    size: Math.random() * 5 + 2,
+                    type: 'normal'
+                });
+            }
+        }
+
+        // 创建爆炸效果
+        function createExplosionEffect(x, y) {
+            // 爆炸冲击波
+            particles.push({
+                x,
+                y,
+                vx: 0,
+                vy: 0,
+                life: 60,
+                maxLife: 60,
+                color: '#ffaa00',
+                size: 0,
+                maxSize: weaponConfig.grenade.explosionRadius,
+                type: 'shockwave'
+            });
+            
+            // 爆炸火花
+            for (let i = 0; i < 30; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = Math.random() * 8 + 2;
+                particles.push({
+                    x,
+                    y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    life: 40,
+                    maxLife: 40,
+                    color: ['#ff6600', '#ffaa00', '#ff9900', '#ffcc00'][Math.floor(Math.random() * 4)],
+                    size: Math.random() * 8 + 4,
+                    type: 'explosion'
+                });
+            }
+            
+            // 爆炸烟雾
+            for (let i = 0; i < 15; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = Math.random() * 3 + 1;
+                particles.push({
+                    x,
+                    y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    life: 80,
+                    maxLife: 80,
+                    color: '#666666',
+                    size: Math.random() * 12 + 8,
+                    type: 'smoke'
+                });
+            }
+        }
+
+        // 激光束射击
+        function fireLaserBeam() {
+            const weapon = weaponConfig.laser;
+            const startX = player.x + Math.cos(player.angle) * 30;
+            const startY = player.y + Math.sin(player.angle) * 30;
+            
+            // 创建激光视觉效果
+            laserEffects.push({
+                startX,
+                startY,
+                angle: player.angle,
+                life: 10, // 激光持续时间
+                maxLife: 10
+            });
+            
+            // 计算激光路径上的所有敌人
+            const hitEnemies = [];
+            for (let i = 0; i < weapon.beamLength; i += 5) {
+                const checkX = startX + Math.cos(player.angle) * i;
+                const checkY = startY + Math.sin(player.angle) * i;
+                
+                // 检查是否超出屏幕
+                if (checkX < 0 || checkX > canvas.width || checkY < 0 || checkY > canvas.height) {
+                    break;
+                }
+                
+                // 检查激光路径上的敌人
+                for (let j = enemies.length - 1; j >= 0; j--) {
+                    const enemy = enemies[j];
+                    if (hitEnemies.includes(j)) continue; // 避免重复伤害
+                    
+                    // 计算点到激光束的距离
+                    const dist = pointToLineDistance(
+                        enemy.x, enemy.y,
+                        startX, startY,
+                        checkX, checkY
+                    );
+                    
+                    if (dist < enemy.size + weapon.beamWidth / 2) {
+                        hitEnemies.push(j);
+                        enemy.health -= weapon.damage;
+                        
+                        // 创建击中效果
+                        createParticles(enemy.x, enemy.y, '255, 0, 255', 10);
+                        
+                        if (enemy.health <= 0) {
+                            createParticles(enemy.x, enemy.y, '255, 102, 0', 15);
+                            enemies.splice(j, 1);
+                            game.score += 10;
+                            game.kills++;
+                            updateHUD();
+                            // 重新调整hitEnemies数组索引
+                            for (let k = 0; k < hitEnemies.length; k++) {
+                                if (hitEnemies[k] > j) hitEnemies[k]--;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 计算点到线段的距离
+        function pointToLineDistance(px, py, x1, y1, x2, y2) {
+            const A = px - x1;
+            const B = py - y1;
+            const C = x2 - x1;
+            const D = y2 - y1;
+            
+            const dot = A * C + B * D;
+            const lenSq = C * C + D * D;
+            
+            if (lenSq === 0) return Math.sqrt(A * A + B * B);
+            
+            let param = dot / lenSq;
+            param = Math.max(0, Math.min(1, param));
+            
+            const xx = x1 + param * C;
+            const yy = y1 + param * D;
+            
+            const dx = px - xx;
+            const dy = py - yy;
+            return Math.sqrt(dx * dx + dy * dy);
+        }
+
+        // 更新游戏
+        function update() {
+            if (game.gameOver || game.paused) return;
+            
+            const currentTime = Date.now();
+            const deltaTime = (currentTime - game.lastTime) / 1000;
+            game.lastTime = currentTime;
+            game.time += deltaTime;
+            
+            // 更新生成率
+            game.spawnRate = Math.min(game.spawnRate + 0.0001, game.maxSpawnRate);
+            
+            // 更新玩家
+            const dx = mouse.x - player.x;
+            const dy = mouse.y - player.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            if (distance > 50) {
+                const moveSpeed = 5;
+                player.x += (dx / distance) * moveSpeed;
+                player.y += (dy / distance) * moveSpeed;
+            }
+            
+            player.angle = Math.atan2(dy, dx);
+            
+            // 更新冷却
+            if (player.weaponCooldown > 0) player.weaponCooldown--;
+            if (player.switchCooldown > 0) player.switchCooldown--;
+            
+            // 射击
+            if (player.firing && player.weaponCooldown <= 0) {
+                const weapon = weaponConfig[player.weapons[player.currentWeapon]];
+                player.weaponCooldown = weapon.cooldown;
+                
+                if (player.weapons[player.currentWeapon] === 'laser') {
+                    // 激光束特殊处理：立即造成伤害
+                    fireLaserBeam();
+                } else {
+                    // 普通子弹
+                    const bulletX = player.x + Math.cos(player.angle) * 30;
+                    const bulletY = player.y + Math.sin(player.angle) * 30;
+                    
+                    bullets.push({
+                        x: bulletX,
+                        y: bulletY,
+                        vx: Math.cos(player.angle) * weapon.speed,
+                        vy: Math.sin(player.angle) * weapon.speed,
+                        damage: weapon.damage,
+                        color: weapon.color,
+                        size: weapon.size,
+                        type: player.weapons[player.currentWeapon],
+                        life: 100
+                    });
+                    
+                    // 机枪特殊效果：双发
+                    if (player.weapons[player.currentWeapon] === 'machine') {
+                        bullets.push({
+                            x: bulletX - Math.sin(player.angle) * 10,
+                            y: bulletY + Math.cos(player.angle) * 10,
+                            vx: Math.cos(player.angle) * weapon.speed,
+                            vy: Math.sin(player.angle) * weapon.speed,
+                            damage: weapon.damage,
+                            color: weapon.color,
+                            size: weapon.size,
+                            type: player.weapons[player.currentWeapon],
+                            life: 100
+                        });
+                    }
+                }
+            }
+            
+            // 更新子弹
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                const bullet = bullets[i];
+                bullet.x += bullet.vx;
+                bullet.y += bullet.vy;
+                bullet.life--;
+                
+                if (bullet.life <= 0 || bullet.x < 0 || bullet.x > canvas.width || 
+                    bullet.y < 0 || bullet.y > canvas.height) {
+                    bullets.splice(i, 1);
+                    continue;
+                }
+                
+                // 碰撞检测
+                for (let j = enemies.length - 1; j >= 0; j--) {
+                    const enemy = enemies[j];
+                    const dist = Math.sqrt(
+                        (bullet.x - enemy.x) ** 2 + (bullet.y - enemy.y) ** 2
+                    );
+                    
+                    if (dist < enemy.size + bullet.size) {
+                        if (bullet.type === 'grenade') {
+                            // 榴弹击中敌人时立即爆炸
+                            const explosionX = bullet.x;
+                            const explosionY = bullet.y;
+                            
+                            // 移除榴弹子弹
+                            bullets.splice(i, 1);
+                            
+                            // 对直接击中的敌人造成伤害
+                            enemy.health -= bullet.damage;
+                            createParticles(enemy.x, enemy.y, '255, 153, 0', 10);
+                            
+                            if (enemy.health <= 0) {
+                                createParticles(enemy.x, enemy.y, '255, 102, 0', 15);
+                                enemies.splice(j, 1);
+                                game.score += 10;
+                                game.kills++;
+                                updateHUD();
+                            }
+                            
+                            // 创建爆炸视觉效果
+                            createExplosionEffect(explosionX, explosionY);
+                            
+                            // 范围爆炸伤害
+                            for (let k = enemies.length - 1; k >= 0; k--) {
+                                const otherEnemy = enemies[k];
+                                if (k === j && enemy.health > 0) continue; // 跳过已经受到直接伤害的敌人
+                                
+                                const explosionDist = Math.sqrt(
+                                    (explosionX - otherEnemy.x) ** 2 + 
+                                    (explosionY - otherEnemy.y) ** 2
+                                );
+                                
+                                if (explosionDist < weaponConfig.grenade.explosionRadius) {
+                                    // 根据距离计算伤害衰减
+                                    const damageRatio = 1 - (explosionDist / weaponConfig.grenade.explosionRadius);
+                                    const damage = weaponConfig.grenade.explosionDamage * damageRatio;
+                                    
+                                    otherEnemy.health -= damage;
+                                    createParticles(otherEnemy.x, otherEnemy.y, '255, 153, 0', 8);
+                                    
+                                    if (otherEnemy.health <= 0) {
+                                        createParticles(otherEnemy.x, otherEnemy.y, '255, 102, 0', 10);
+                                        enemies.splice(k, 1);
+                                        game.score += 5;
+                                        game.kills++;
+                                        // 调整索引，因为删除了敌人
+                                        if (k < j) j--;
+                                    }
+                                }
+                            }
+                            break; // 榴弹爆炸后退出碰撞检测
+                        } else {
+                            // 非榴弹武器的常规处理
+                            enemy.health -= bullet.damage;
+                            
+                            // 非激光武器击中后移除子弹
+                            if (bullet.type !== 'laser') {
+                                bullets.splice(i, 1);
+                            }
+                            
+                            if (enemy.health <= 0) {
+                                createParticles(enemy.x, enemy.y, '255, 102, 0', 15);
+                                enemies.splice(j, 1);
+                                game.score += 10;
+                                game.kills++;
+                                updateHUD();
+                            }
+                            
+                            // 激光穿透效果：只有击中敌人时才跳出内层循环，但不移除子弹
+                            if (bullet.type !== 'laser') {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // 更新敌人
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const enemy = enemies[i];
+                const dx = player.x - enemy.x;
+                const dy = player.y - enemy.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                enemy.x += (dx / distance) * enemy.speed;
+                enemy.y += (dy / distance) * enemy.speed;
+                enemy.angle = Math.atan2(dy, dx);
+                
+                // 玩家碰撞
+                if (distance < enemy.size + player.size) {
+                    const totalDamage = 10;
+                    const shieldDamage = 20;
+                    
+                    // 先扣护盾
+                    if (player.shield > 0) {
+                        const actualShieldDamage = Math.min(player.shield, shieldDamage);
+                        player.shield -= actualShieldDamage;
+                        
+                        // 如果护盾完全抵挡了伤害，就不扣血
+                        if (actualShieldDamage >= totalDamage) {
+                            // 护盾完全吸收伤害，不扣血
+                        } else {
+                            // 护盾部分吸收，剩余伤害扣血
+                            const remainingDamage = totalDamage - actualShieldDamage;
+                            player.health -= remainingDamage;
+                        }
+                    } else {
+                        // 护盾为0，直接扣血
+                        player.health -= totalDamage;
+                    }
+                    
+                    createParticles(player.x, player.y, '255, 0, 0', 5);
+                    enemies.splice(i, 1);
+                    updateHUD();
+                }
+            }
+            
+            // 更新粒子
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const particle = particles[i];
+                particle.x += particle.vx;
+                particle.y += particle.vy;
+                particle.life--;
+                
+                if (particle.type === 'shockwave') {
+                    // 冲击波扩散
+                    const progress = 1 - (particle.life / particle.maxLife);
+                    particle.size = particle.maxSize * progress;
+                } else if (particle.type === 'explosion') {
+                    // 爆炸火花减速
+                    particle.vx *= 0.95;
+                    particle.vy *= 0.95;
+                } else if (particle.type === 'smoke') {
+                    // 烟雾上升和扩散
+                    particle.vy -= 0.1; // 向上飘
+                    particle.vx *= 0.99;
+                    particle.vy *= 0.99;
+                } else {
+                    // 普通粒子
+                    particle.vx *= 0.98;
+                    particle.vy *= 0.98;
+                }
+                
+                if (particle.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+            
+            // 更新激光效果
+            for (let i = laserEffects.length - 1; i >= 0; i--) {
+                laserEffects[i].life--;
+                if (laserEffects[i].life <= 0) {
+                    laserEffects.splice(i, 1);
+                }
+            }
+            
+            // 生成新敌人
+            if (Math.random() < game.spawnRate) {
+                createEnemy();
+            }
+            
+            // 护盾恢复（只有在没有受到伤害一段时间后才恢复）
+            if (player.shield < player.maxShield && player.health > 0) {
+                player.shield = Math.min(player.maxShield, player.shield + 0.2); // 提升恢复速度
+            }
+            
+            // 确保数值不超出范围
+            player.health = Math.max(0, Math.min(player.maxHealth, player.health));
+            player.shield = Math.max(0, Math.min(player.maxShield, player.shield));
+            
+            // 更新HUD
+            const healthPercent = Math.max(0, (player.health / player.maxHealth) * 100);
+            const shieldPercent = Math.max(0, (player.shield / player.maxShield) * 100);
+            
+            document.getElementById('healthFill').style.width = `${healthPercent}%`;
+            document.getElementById('shieldFill').style.width = `${shieldPercent}%`;
+            
+            // 根据护盾状态改变颜色
+            const shieldFill = document.getElementById('shieldFill');
+            if (player.shield <= 0) {
+                shieldFill.style.background = 'linear-gradient(90deg, #666666, #888888)'; // 灰色表示护盾耗尽
+            } else if (player.shield < player.maxShield * 0.3) {
+                shieldFill.style.background = 'linear-gradient(90deg, #ff6600, #ffaa00)'; // 橙色表示护盾低
+            } else {
+                shieldFill.style.background = 'linear-gradient(90deg, #0066ff, #00ccff)'; // 正常蓝色
+            }
+            
+            // 游戏结束
+            if (player.health <= 0) {
+                game.gameOver = true;
+                showGameOver();
+            }
+        }
+
+        // 显示游戏结束界面
+        function showGameOver() {
+            // 创建游戏结束覆盖层
+            const gameOverDiv = document.createElement('div');
+            gameOverDiv.id = 'gameOverScreen';
+            gameOverDiv.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.8);
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                align-items: center;
+                color: #00ffff;
+                font-family: 'Courier New', monospace;
+                text-align: center;
+                z-index: 1000;
+            `;
+            
+            gameOverDiv.innerHTML = `
+                <h1 style="font-size: 48px; margin-bottom: 20px; text-shadow: 0 0 20px #00ffff;">游戏结束</h1>
+                <div style="font-size: 24px; margin-bottom: 30px;">
+                    <div>最终得分: ${game.score}</div>
+                    <div>击杀数: ${game.kills}</div>
+                    <div>生存时间: ${Math.floor(game.time)}秒</div>
+                </div>
+                <button id="restartBtn" style="
+                    background: rgba(0, 255, 255, 0.2);
+                    border: 2px solid #00ffff;
+                    color: #00ffff;
+                    padding: 15px 30px;
+                    font-size: 18px;
+                    font-family: 'Courier New', monospace;
+                    border-radius: 5px;
+                    cursor: pointer;
+                    transition: all 0.3s ease;
+                " onmouseover="this.style.background='rgba(0, 255, 255, 0.4)'" 
+                   onmouseout="this.style.background='rgba(0, 255, 255, 0.2)'">
+                    重新开始
+                </button>
+            `;
+            
+            document.body.appendChild(gameOverDiv);
+            
+            // 重新开始按钮事件
+            document.getElementById('restartBtn').addEventListener('click', () => {
+                document.body.removeChild(gameOverDiv);
+                restartGame();
+            });
+        }
+
+        // 重新开始游戏
+        function restartGame() {
+            // 重置游戏状态
+            game.score = 0;
+            game.kills = 0;
+            game.time = 0;
+            game.gameOver = false;
+            game.paused = false;
+            game.spawnRate = 0.02;
+            
+            // 重置玩家
+            player.x = canvas.width / 2;
+            player.y = canvas.height / 2;
+            player.health = 100;
+            player.shield = 100;
+            player.currentWeapon = 0;
+            player.weaponCooldown = 0;
+            player.switchCooldown = 0;
+            player.firing = false;
+            
+            // 清空数组
+            bullets.length = 0;
+            enemies.length = 0;
+            particles.length = 0;
+            laserEffects.length = 0;
+            
+            // 重置时间
+            game.lastTime = Date.now();
+            
+            // 更新UI
+            updateHUD();
+            updateWeaponUI();
+        }
+
+        // 渲染游戏
+        function render() {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // 绘制星空背景
+            for (let i = 0; i < 100; i++) {
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+                ctx.fillRect(
+                    Math.random() * canvas.width,
+                    Math.random() * canvas.height,
+                    1, 1
+                );
+            }
+            
+            // 绘制玩家
+            ctx.save();
+            ctx.translate(player.x, player.y);
+            ctx.rotate(player.angle);
+            
+            // 飞船主体
+            ctx.fillStyle = '#00ffff';
+            ctx.beginPath();
+            ctx.moveTo(20, 0);
+            ctx.lineTo(-10, -10);
+            ctx.lineTo(-10, 10);
+            ctx.closePath();
+            ctx.fill();
+            
+            // 武器组件
+            const weaponType = player.weapons[player.currentWeapon];
+            if (weaponType === 'machine') {
+                ctx.fillStyle = '#0088ff';
+                ctx.fillRect(-15, -15, 5, 10);
+                ctx.fillRect(-15, 5, 5, 10);
+            } else if (weaponType === 'laser') {
+                ctx.strokeStyle = '#ff00ff';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(-15, -10, 5, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.arc(-15, 10, 5, 0, Math.PI * 2);
+                ctx.stroke();
+            } else if (weaponType === 'grenade') {
+                ctx.fillStyle = '#ffff00';
+                ctx.beginPath();
+                ctx.arc(-15, -10, 5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(-15, 10, 5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            ctx.restore();
+            
+            // 绘制子弹
+            bullets.forEach(bullet => {
+                // 普通子弹渲染（激光现在不再是子弹了）
+                ctx.fillStyle = bullet.color;
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = bullet.color;
+                ctx.beginPath();
+                ctx.arc(bullet.x, bullet.y, bullet.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            });
+            
+            // 绘制激光束
+            laserEffects.forEach(laser => {
+                const alpha = laser.life / laser.maxLife;
+                const weapon = weaponConfig.laser;
+                
+                ctx.save();
+                
+                // 主激光束
+                ctx.strokeStyle = `rgba(255, 0, 255, ${alpha * 0.8})`;
+                ctx.lineWidth = weapon.beamWidth;
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = weapon.color;
+                
+                const endX = laser.startX + Math.cos(laser.angle) * weapon.beamLength;
+                const endY = laser.startY + Math.sin(laser.angle) * weapon.beamLength;
+                
+                // 确保激光不超出屏幕
+                const clampedEndX = Math.max(0, Math.min(canvas.width, endX));
+                const clampedEndY = Math.max(0, Math.min(canvas.height, endY));
+                
+                ctx.beginPath();
+                ctx.moveTo(laser.startX, laser.startY);
+                ctx.lineTo(clampedEndX, clampedEndY);
+                ctx.stroke();
+                
+                // 内层激光束（更亮）
+                ctx.strokeStyle = `rgba(255, 100, 255, ${alpha})`;
+                ctx.lineWidth = weapon.beamWidth * 0.4;
+                ctx.shadowBlur = 10;
+                ctx.beginPath();
+                ctx.moveTo(laser.startX, laser.startY);
+                ctx.lineTo(clampedEndX, clampedEndY);
+                ctx.stroke();
+                
+                // 激光核心（最亮）
+                ctx.strokeStyle = `rgba(255, 200, 255, ${alpha})`;
+                ctx.lineWidth = weapon.beamWidth * 0.1;
+                ctx.shadowBlur = 5;
+                ctx.beginPath();
+                ctx.moveTo(laser.startX, laser.startY);
+                ctx.lineTo(clampedEndX, clampedEndY);
+                ctx.stroke();
+                
+                ctx.restore();
+            });
+            
+            // 绘制敌人
+            enemies.forEach(enemy => {
+                ctx.save();
+                ctx.translate(enemy.x, enemy.y);
+                ctx.rotate(enemy.angle);
+                
+                const alpha = enemy.health / enemy.maxHealth;
+                ctx.fillStyle = `rgba(255, 0, 0, ${alpha})`;
+                ctx.strokeStyle = '#ff0000';
+                ctx.lineWidth = 2;
+                
+                if (enemy.type === 'triangle') {
+                    ctx.beginPath();
+                    ctx.moveTo(enemy.size, 0);
+                    ctx.lineTo(-enemy.size/2, -enemy.size/2);
+                    ctx.lineTo(-enemy.size/2, enemy.size/2);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.stroke();
+                } else if (enemy.type === 'square') {
+                    ctx.fillRect(-enemy.size/2, -enemy.size/2, enemy.size, enemy.size);
+                    ctx.strokeRect(-enemy.size/2, -enemy.size/2, enemy.size, enemy.size);
+                } else if (enemy.type === 'pentagon') {
+                    ctx.beginPath();
+                    for (let i = 0; i < 5; i++) {
+                        const angle = (i * 2 * Math.PI) / 5;
+                        const x = Math.cos(angle) * enemy.size;
+                        const y = Math.sin(angle) * enemy.size;
+                        if (i === 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                    }
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.stroke();
+                } else if (enemy.type === 'hexagon') {
+                    ctx.beginPath();
+                    for (let i = 0; i < 6; i++) {
+                        const angle = (i * 2 * Math.PI) / 6;
+                        const x = Math.cos(angle) * enemy.size;
+                        const y = Math.sin(angle) * enemy.size;
+                        if (i === 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                    }
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.stroke();
+                }
+                
+                ctx.restore();
+            });
+            
+            // 绘制粒子
+            particles.forEach(particle => {
+                const alpha = particle.life / particle.maxLife;
+                
+                if (particle.type === 'shockwave') {
+                    // 绘制冲击波圆环
+                    ctx.save();
+                    ctx.strokeStyle = `rgba(255, 170, 0, ${alpha * 0.6})`;
+                    ctx.lineWidth = 4;
+                    ctx.shadowBlur = 20;
+                    ctx.shadowColor = particle.color;
+                    ctx.beginPath();
+                    ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+                    ctx.stroke();
+                    
+                    // 内圈冲击波
+                    ctx.strokeStyle = `rgba(255, 204, 0, ${alpha * 0.8})`;
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.arc(particle.x, particle.y, particle.size * 0.7, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.restore();
+                } else if (particle.type === 'explosion') {
+                    // 绘制爆炸火花
+                    ctx.save();
+                    ctx.fillStyle = `${particle.color}${Math.floor(alpha * 255).toString(16).padStart(2, '0')}`;
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = particle.color;
+                    ctx.beginPath();
+                    ctx.arc(particle.x, particle.y, particle.size * alpha, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                } else if (particle.type === 'smoke') {
+                    // 绘制烟雾
+                    ctx.save();
+                    ctx.fillStyle = `rgba(102, 102, 102, ${alpha * 0.3})`;
+                    ctx.beginPath();
+                    ctx.arc(particle.x, particle.y, particle.size * (1.5 - alpha), 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                } else {
+                    // 普通粒子
+                    ctx.fillStyle = `rgba(${particle.color}, ${alpha})`;
+                    ctx.beginPath();
+                    ctx.arc(particle.x, particle.y, particle.size * alpha, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            });
+            
+            // 绘制暂停界面
+            if (game.paused) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = '#00ffff';
+                ctx.font = '48px Courier New';
+                ctx.textAlign = 'center';
+                ctx.fillText('游戏暂停', canvas.width / 2, canvas.height / 2 - 50);
+                
+                ctx.font = '24px Courier New';
+                ctx.fillText('按空格键继续', canvas.width / 2, canvas.height / 2 + 20);
+                ctx.textAlign = 'left';
+            }
+        }
+
+        // 更新HUD
+        function updateHUD() {
+            document.getElementById('score').textContent = game.score;
+            document.getElementById('kills').textContent = game.kills;
+            document.getElementById('time').textContent = Math.floor(game.time);
+            document.getElementById('healthValue').textContent = Math.floor(player.health);
+            document.getElementById('shieldValue').textContent = Math.floor(player.shield);
+        }
+
+        // 游戏循环
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // 开始游戏
+        game.lastTime = Date.now();
+        gameLoop();
+        setInterval(updateHUD, 100);
+    </script>
+</body>
+</html>
